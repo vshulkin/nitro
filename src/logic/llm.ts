@@ -100,7 +100,7 @@ function createClaudeCodeModel(modelId: string): LanguageModelV3 {
 
       const stream = new ReadableStream({
         start(controller) {
-          const proc = spawn("claude", ["--print"], {
+          const proc = spawn("claude", ["--print", "--output-format", "json"], {
             stdio: ["pipe", "pipe", "pipe"],
           });
 
@@ -123,29 +123,56 @@ function createClaudeCodeModel(modelId: string): LanguageModelV3 {
                 type: "error",
                 error: new Error(`claude exited with code ${code}`),
               });
-            } else {
-              const text = output.trim();
-              const id = "text-0";
-              controller.enqueue({ type: "stream-start", warnings: [] });
-              controller.enqueue({ type: "text-start", id });
-              controller.enqueue({ type: "text-delta", id, delta: text });
-              controller.enqueue({ type: "text-end", id });
-              controller.enqueue({
-                type: "finish",
-                finishReason: "stop",
-                usage: {
-                  inputTokens: {
-                    total: Math.ceil(prompt.length / 4),
-                    noCache: Math.ceil(prompt.length / 4),
-                    cacheRead: undefined,
-                    cacheWrite: undefined,
-                  },
-                  outputTokens: {
-                    total: Math.ceil(text.length / 4),
-                  },
-                },
-              });
+              controller.close();
+              return;
             }
+
+            let text = output.trim();
+            let inputCacheRead = 0;
+            let inputCacheWrite = 0;
+            let inputTotal: number;
+            let outputTotal: number;
+
+            try {
+              const json = JSON.parse(text) as {
+                result?: string;
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  cache_read_input_tokens?: number;
+                  cache_creation_input_tokens?: number;
+                };
+              };
+              text = json.result ?? text;
+              const u = json.usage ?? {};
+              inputCacheRead = u.cache_read_input_tokens ?? 0;
+              inputCacheWrite = u.cache_creation_input_tokens ?? 0;
+              inputTotal =
+                (u.input_tokens ?? 0) + inputCacheRead + inputCacheWrite;
+              outputTotal = u.output_tokens ?? 0;
+            } catch {
+              inputTotal = Math.ceil(prompt.length / 4);
+              outputTotal = Math.ceil(text.length / 4);
+            }
+
+            const id = "text-0";
+            controller.enqueue({ type: "stream-start", warnings: [] });
+            controller.enqueue({ type: "text-start", id });
+            controller.enqueue({ type: "text-delta", id, delta: text });
+            controller.enqueue({ type: "text-end", id });
+            controller.enqueue({
+              type: "finish",
+              finishReason: "stop",
+              usage: {
+                inputTokens: {
+                  total: inputTotal,
+                  noCache: inputTotal - inputCacheRead - inputCacheWrite,
+                  cacheRead: inputCacheRead,
+                  cacheWrite: inputCacheWrite,
+                },
+                outputTokens: { total: outputTotal },
+              },
+            });
             controller.close();
           });
 
