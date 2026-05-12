@@ -37,6 +37,28 @@ function addCacheControl<T extends ModelMessage>(
   };
 }
 
+// Mark the last tool with a cache breakpoint so system prompt + all tool
+// definitions are cached together. The combined size (~1800+ tokens) clears
+// Anthropic's 1024-token minimum; the system prompt alone does not.
+function cacheLastTool(tools: ToolSet, providerName: string): ToolSet {
+  const keys = Object.keys(tools);
+  if (keys.length === 0) return tools;
+  const lastKey = keys[keys.length - 1]!;
+  const lastTool = tools[lastKey]!;
+  return {
+    ...tools,
+    [lastKey]: {
+      ...lastTool,
+      providerOptions: {
+        ...lastTool.providerOptions,
+        [providerName]: {
+          cacheControl: { type: "ephemeral" },
+        },
+      },
+    },
+  } as unknown as ToolSet;
+}
+
 function createSystemMessage(systemPrompt: string): SystemModelMessage {
   const systemMessage: SystemModelMessage = {
     role: "system",
@@ -270,36 +292,28 @@ export function generateCompletion(
 
   const isAnthropic = provider.apiType === "anthropic";
 
-  // For Anthropic, embed the system message in the messages array so that
-  // providerOptions (cache_control) is forwarded correctly to the API.
-  // Passing via the `system` parameter strips providerOptions and skips caching.
-  let finalMessages: ModelMessage[];
-  let systemParam: SystemModelMessage | undefined;
+  const systemMessage = createSystemMessage(systemPrompt);
 
-  if (isAnthropic) {
-    const cachedUserMessages =
-      messages.length > 0
-        ? [
-            ...messages.slice(0, -1),
-            addCacheControl(messages[messages.length - 1]!, provider.name),
-          ]
-        : messages;
-    finalMessages = [
-      addCacheControl(createSystemMessage(systemPrompt), provider.name),
-      ...cachedUserMessages,
-    ];
-    systemParam = undefined;
-  } else {
-    finalMessages = messages;
-    systemParam = createSystemMessage(systemPrompt);
-  }
+  const cachedMessages =
+    isAnthropic && messages.length > 0
+      ? [
+          ...messages.slice(0, -1),
+          addCacheControl(messages[messages.length - 1]!, provider.name),
+        ]
+      : messages;
+
+  // Cache the last tool definition so system prompt + all tools are cached
+  // together (~1800+ tokens, above Anthropic's 1024-token minimum). The system
+  // prompt alone is ~800 tokens and would be silently ignored.
+  const finalTools =
+    isAnthropic && tools ? cacheLastTool(tools, provider.name) : tools;
 
   return streamText({
     model: client(provider.model),
-    messages: finalMessages,
-    system: systemParam,
+    messages: cachedMessages,
+    system: systemMessage,
     maxOutputTokens: options?.maxOutputTokens,
-    tools,
+    tools: finalTools,
     providerOptions: {
       [provider.name]: providerOptions,
     },
