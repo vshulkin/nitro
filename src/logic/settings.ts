@@ -70,7 +70,7 @@ export const SettingsSchema = z.object({
   showThinking: z.boolean().default(false),
   showTokenSummary: z.boolean().default(false),
   maxOutputTokens: z.number().int().positive().default(16000),
-  reasoningEffort: z.enum(["low", "med", "high"]).default("med"),
+  reasoningEffort: z.enum(["none", "low", "med", "high"]).default("med"),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -135,6 +135,11 @@ export const SETTINGS_META: SettingMeta[] = [
     description: "How much the model reasons before responding",
     type: "select",
     options: [
+      {
+        value: "none",
+        label:
+          "None - No reasoning (use for models that don't support thinking)",
+      },
       { value: "low", label: "Low - Fast, concise reasoning" },
       { value: "med", label: "Medium - Balanced (default)" },
       { value: "high", label: "High - Thorough reasoning" },
