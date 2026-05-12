@@ -8,6 +8,11 @@ export interface DefaultProvider {
 
 export const DEFAULT_PROVIDERS: DefaultProvider[] = [
   {
+    name: "claude-code",
+    baseURL: "",
+    apiType: "claude-code",
+  },
+  {
     name: "openai",
     baseURL: "https://api.openai.com/v1",
     apiType: "openai-responses",
@@ -72,6 +77,9 @@ export async function fetchModels(
   apiKey: string,
   apiType: ApiType,
 ): Promise<string[]> {
+  if (apiType === "claude-code") {
+    return ["claude-code"];
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),

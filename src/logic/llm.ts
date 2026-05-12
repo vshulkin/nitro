@@ -1,4 +1,5 @@
 import { exit } from "node:process";
+import { spawn } from "node:child_process";
 
 import {
   streamText,
@@ -6,6 +7,7 @@ import {
   type ModelMessage,
   type SystemModelMessage,
 } from "ai";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import {
   createOpenAICompatible,
   OpenAICompatibleProviderOptions,
@@ -48,6 +50,105 @@ export interface GenerationOptions {
   reasoningEffort?: ReasoningEffort;
 }
 
+function promptToString(prompt: unknown[]): string {
+  const parts: string[] = [];
+  for (const msg of prompt as Array<{ role: string; content: unknown }>) {
+    if (msg.role === "system") {
+      parts.push(msg.content as string);
+    } else if (msg.role === "user") {
+      const content = msg.content as Array<{ type: string; text?: string }>;
+      const text = content
+        .filter(p => p.type === "text")
+        .map(p => p.text ?? "")
+        .join("");
+      parts.push(`Human: ${text}`);
+    } else if (msg.role === "assistant") {
+      const content = msg.content as Array<{ type: string; text?: string }>;
+      const text = content
+        .filter(p => p.type === "text")
+        .map(p => p.text ?? "")
+        .join("");
+      if (text) parts.push(`Assistant: ${text}`);
+    } else if (msg.role === "tool") {
+      const content = msg.content as Array<{ result: unknown }>;
+      const text = content
+        .map(p =>
+          typeof p.result === "string" ? p.result : JSON.stringify(p.result),
+        )
+        .join("\n");
+      parts.push(`Tool Result: ${text}`);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+function createClaudeCodeModel(modelId: string): LanguageModelV3 {
+  return {
+    specificationVersion: "v3",
+    provider: "claude-code",
+    modelId,
+    supportedUrls: {},
+
+    doGenerate() {
+      return Promise.reject(
+        new Error("claude-code provider does not support doGenerate"),
+      );
+    },
+
+    doStream(options) {
+      const prompt = promptToString(options.prompt as unknown[]);
+
+      const stream = new ReadableStream({
+        start(controller) {
+          const proc = spawn("claude", ["--print"], {
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+
+          let output = "";
+          proc.stdout.on("data", (chunk: Buffer) => {
+            output += chunk.toString();
+          });
+          proc.stderr.on("data", (chunk: Buffer) => {
+            process.stderr.write(`[claude-code] ${chunk.toString()}`);
+          });
+
+          proc.on("error", (err: Error) => {
+            controller.enqueue({ type: "error", error: err });
+            controller.close();
+          });
+
+          proc.on("close", (code: number | null) => {
+            if (code !== 0) {
+              controller.enqueue({
+                type: "error",
+                error: new Error(`claude exited with code ${code}`),
+              });
+            } else {
+              const text = output.trim();
+              const id = "text-0";
+              controller.enqueue({ type: "stream-start", warnings: [] });
+              controller.enqueue({ type: "text-start", id });
+              controller.enqueue({ type: "text-delta", id, delta: text });
+              controller.enqueue({ type: "text-end", id });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 0, outputTokens: 0 },
+              });
+            }
+            controller.close();
+          });
+
+          proc.stdin.write(prompt);
+          proc.stdin.end();
+        },
+      });
+
+      return Promise.resolve({ stream });
+    },
+  };
+}
+
 function createClient(name: string, provider: ProviderInfo) {
   switch (provider.apiType) {
     case "openai-responses":
@@ -62,6 +163,8 @@ function createClient(name: string, provider: ProviderInfo) {
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
       });
+    case "claude-code":
+      return (_modelId: string) => createClaudeCodeModel(_modelId);
     case "openai-compatible":
     default:
       return createOpenAICompatible({
@@ -76,7 +179,7 @@ function getProviderOptions(
   provider: ProviderInfoWithName,
   reasoningEffort?: ReasoningEffort,
 ) {
-  if (!reasoningEffort) {
+  if (!reasoningEffort || provider.apiType === "claude-code") {
     return {};
   }
   switch (provider.apiType) {
