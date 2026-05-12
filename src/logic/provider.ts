@@ -7,6 +7,7 @@ export const ApiTypeSchema = z.enum([
   "openai-compatible",
   "openai-responses",
   "anthropic",
+  "claude-code",
 ]);
 
 export const ProviderInfoSchema = z.object({
