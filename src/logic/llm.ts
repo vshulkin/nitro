@@ -216,7 +216,11 @@ function getProviderOptions(
   provider: ProviderInfoWithName,
   reasoningEffort?: ReasoningEffort,
 ) {
-  if (!reasoningEffort || provider.apiType === "claude-code") {
+  if (
+    !reasoningEffort
+    || reasoningEffort === "none"
+    || provider.apiType === "claude-code"
+  ) {
     return {};
   }
   switch (provider.apiType) {
@@ -234,7 +238,7 @@ function getProviderOptions(
     }
     case "anthropic": {
       const effortMap: Record<
-        ReasoningEffort,
+        Exclude<ReasoningEffort, "none">,
         "low" | "high" | "medium" | "max"
       > = {
         low: "low",
