@@ -133,7 +133,17 @@ function createClaudeCodeModel(modelId: string): LanguageModelV3 {
               controller.enqueue({
                 type: "finish",
                 finishReason: "stop",
-                usage: { inputTokens: 0, outputTokens: 0 },
+                usage: {
+                  inputTokens: {
+                    total: Math.ceil(prompt.length / 4),
+                    noCache: Math.ceil(prompt.length / 4),
+                    cacheRead: undefined,
+                    cacheWrite: undefined,
+                  },
+                  outputTokens: {
+                    total: Math.ceil(text.length / 4),
+                  },
+                },
               });
             }
             controller.close();
