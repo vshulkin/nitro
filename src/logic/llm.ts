@@ -269,22 +269,35 @@ export function generateCompletion(
   );
 
   const isAnthropic = provider.apiType === "anthropic";
-  const systemMessage = isAnthropic
-    ? addCacheControl(createSystemMessage(systemPrompt), provider.name)
-    : createSystemMessage(systemPrompt);
 
-  const cachedMessages =
-    isAnthropic && messages.length > 0
-      ? [
-          ...messages.slice(0, -1),
-          addCacheControl(messages[messages.length - 1]!, provider.name),
-        ]
-      : messages;
+  // For Anthropic, embed the system message in the messages array so that
+  // providerOptions (cache_control) is forwarded correctly to the API.
+  // Passing via the `system` parameter strips providerOptions and skips caching.
+  let finalMessages: ModelMessage[];
+  let systemParam: SystemModelMessage | undefined;
+
+  if (isAnthropic) {
+    const cachedUserMessages =
+      messages.length > 0
+        ? [
+            ...messages.slice(0, -1),
+            addCacheControl(messages[messages.length - 1]!, provider.name),
+          ]
+        : messages;
+    finalMessages = [
+      addCacheControl(createSystemMessage(systemPrompt), provider.name),
+      ...cachedUserMessages,
+    ];
+    systemParam = undefined;
+  } else {
+    finalMessages = messages;
+    systemParam = createSystemMessage(systemPrompt);
+  }
 
   return streamText({
     model: client(provider.model),
-    messages: cachedMessages,
-    system: systemMessage,
+    messages: finalMessages,
+    system: systemParam,
     maxOutputTokens: options?.maxOutputTokens,
     tools,
     providerOptions: {
